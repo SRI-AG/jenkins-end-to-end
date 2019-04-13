@@ -1,0 +1,199 @@
+ns End-To- End Flow :-
+end-to-end flow
+pipeline {
+agent any
+stages {
+stage('checkout') {
+steps {
+script {
+git 'https://github.com/cjpcloud/jenkinsrepo.git'
+}
+}
+}
+stage("build & SonarQube analysis") {
+steps {
+script {
+withSonarQubeEnv('SonarQube') {
+sh 'mvn clean package sonar:sonar'
+}
+}
+}
+}
+stage ("Junit") {
+steps {
+script {
+junit 'target/surefire-reports/*.xml'
+}
+}
+}
+stage ("deploy nexus") {
+steps {
+script {
+nexusArtifactUploader artifacts: [[artifactId: 'flipkart', classifier: '', file:
+'target/flipkart-1.1-SNAPSHOT.jar', type: 'jar']], credentialsId: '1ab5a6da-c743-4e27-8478-
+5a62a4e9e0fd', groupId: 'wipro.in.com', nexusUrl: '54.89.142.214:8088/nexus-latest',
+nexusVersion: 'nexus2', protocol: 'http', repository: 'releases', version: '2.9'
+}
+}
+if (branchName == "preprod") {
+promoteStage()
+}
+def promoteStage(){
+// Stage: promote
+stage ('Appprove to proceed'){
+notifyQA()
+proceedConfirmation("proceed1","promote to Prod ?")
+}
+node{
+stage ('Promote artifacts to Prod'){
+def server = Artifactory.server 'artifacts'
+def uploadSpec = """{
+"files": [
+{
+"pattern": "${repositoryName}-1.0.${env.BUILD_NUMBER}.tar",
+"target": "ivy-dev-local/ENTCOM/DTVApps/${repositoryName}/release/"
+}
+]
+}"""
+def buildInfo1 = server.upload(uploadSpec)
+server.publishBuildInfo(buildInfo1)
+}
+}
+}
+def notifyQA(String buildStatus = 'STARTED') {
+// build status of null means successful
+buildStatus = buildStatus ?: 'SUCCESSFUL'
+def toList = qaEmailId
+def subject = "QA: '${repositoryName}' artifact ready for promotion to
+Prod"
+def summary = "${subject} (${env.BUILD_URL})"
+def details = """
+<p>Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' is ready to be
+promoted from DEV to QA.</p>
+<p>Click here to move the library into the QA artifactory for testing. "<a
+href="${env.BUILD_URL}/input">${env.JOB_NAME} [${env.BUILD_NUMBER}]
+</a>"</p>
+"""
+emailext body: details,mimeType: 'text/html', subject: subject, to: toList
+}
+def proceedConfirmation(String id, String message) {
+def userInput = true
+def didTimeout = false
+try {
+timeout(time: waitingTime, unit: 'HOURS') { //
+userInput = input(
+id: "${id}", message: "${message}", parameters: [
+[$class: 'BooleanParameterDefinition', defaultValue: true, description: '', name:
+'Confirm to proceed !']
+])
+}
+}
+catch(e) { // timeout reached or input false
+def user = e.getCauses()[0].getUser()
+if('SYSTEM' == user.toString()) { // SYSTEM means timeout.
+didTimeout = true
+if (didTimeout) {
+echo "no input was received abefore timeout"
+currentBuild.result = "FAILURE"
+throw e
+}
+else if (userInput == true) {
+echo "this was successful"
+}
+else {
+userInput = false
+echo "this was not successful"
+currentBuild.result = "FAILURE"
+println("catch exeption. currentBuild.result: ${currentBuild.result}")
+throw e
+}
+}
+else {
+userInput = false
+echo "Aborted by: [${user}]"
+}
+}
+}
+}
+stage('ansibleTower')
+{
+steps
+{
+script
+{
+if (isMaster)
+{
+ansibleTower credential: '',
+extraVars: "tag: ${env.BUILD_NUMBER}",
+importTowerLogs: false,
+importWorkflowChildLogs: false,
+inventory: 'Dev_Environment',
+jobTags: '',
+jobTemplate: 'Dev_Env_Deployment',
+limit: '',
+removeColor: false,
+templateType: 'job',
+towerServer: 'maheshAnsibleTower',
+verbose: false
+}
+else
+{
+ansibleTower credential: '',
+extraVars: "tag: ${env.BUILD_NUMBER}",
+importTowerLogs: false,
+importWorkflowChildLogs: false,
+inventory: 'Dev_Environment',
+jobTags: '',
+jobTemplate: 'PreProd_Env_Deployment',
+limit: '',
+removeColor: false,
+templateType: 'job',
+towerServer: 'maheshAnsibleTower',
+verbose: false
+}
+}
+}
+} */
+}
+post
+{
+success
+{
+script
+{
+if (isMaster)
+{
+mail to: 'cjptech12@gmail.com',
+subject: "Build + Condition Pass",
+body: "Build got success check status @ ${env.BUILD_URL}"
+}
+else
+{
+mail to: 'cjptech12@gmail.com',
+subject: "Build Pass + Condition Fail",
+body: "Build got success check status @ ${env.BUILD_URL}"
+}
+}
+}
+failure
+{
+script
+{
+if (isMaster)
+{
+mail to: 'cjptech12@gmail.com',
+subject: "Build fail + Condition Pass",
+body: "Build got success check status @ ${env.BUILD_URL}"
+}
+else
+{
+mail to: 'cjptech12@gmail.com',
+subject: "Build + Condition Fail",
+body: "Build got success check status @ ${env.BUILD_URL}"
+}
+}
+}
+}
+}
+
+
